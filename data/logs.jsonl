@@ -1,0 +1,1 @@
+{"id":"950d0309-5f25-4a75-a28a-ec425a76b069","time":"2026-11-11T09:11:43.536Z","user":"admin","action":"product.create","target":"Test Product 1 (ec06f0c2-27b7-4f8d-942f-0aed6141dbfb)","details":{"id":"ec06f0c2-27b7-4f8d-942f-0aed6141dbfb","name":"Test Product 1","price":100,"salePrice":null,"saleStart":null,"saleEnd":null}}

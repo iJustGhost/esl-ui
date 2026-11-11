@@ -1,0 +1,14 @@
+{
+  "users": [
+    {
+      "username": "admin",
+      "role": "admin",
+      "hash": "37a512dd86795fd8d713683e91a1323f:9cb1ea87dc992a6966e993beb7c8bbc8e1bc96beae6aa214ac05754c55e0320b25cc27743caded8ccc708883b1226624a0d6bf825ca649c5dd2843d4aaac23b9"
+    },
+    {
+      "username": "clerk",
+      "role": "user",
+      "hash": "c2624024309908932caa8f94f20cfde9:82b94ac3b05d35773d534201883c4936de4c095ca4fe4ab32e769789c02d34759c00c32acdfa396b16b18e46ea379abb5d7113ee10e76c92fb69883b0cbe297c"
+    }
+  ]
+}
