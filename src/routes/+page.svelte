@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import ImportProductsCsv from '$lib/components/ImportProductsCsv.svelte';
 
 	type Product = {
 		id: string;
@@ -121,6 +122,7 @@
 		value="Add New Product"
 		onclick={() => (showAddProductModal = true)}
 	/>
+	<ImportProductsCsv onimported={loadProducts} />
 </div>
 
 <!-- card layout grid -->

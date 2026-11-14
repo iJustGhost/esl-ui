@@ -1,8 +1,24 @@
 [
   {
-    "id": "ec06f0c2-27b7-4f8d-942f-0aed6141dbfb",
-    "name": "Test Product 1",
-    "price": 102,
+    "id": "c3eba3e2-96ba-4583-82e8-ffe8e3489656",
+    "name": "Milk, 1L",
+    "price": 89.5,
+    "salePrice": 79,
+    "saleStart": null,
+    "saleEnd": null
+  },
+  {
+    "id": "e288787f-8b08-4a41-a206-a82528b38da6",
+    "name": "Bread",
+    "price": 120,
+    "salePrice": null,
+    "saleStart": null,
+    "saleEnd": null
+  },
+  {
+    "id": "c575fa72-1e7f-4c0a-84d0-4a8d235123a1",
+    "name": "Eggs",
+    "price": 150,
     "salePrice": null,
     "saleStart": null,
     "saleEnd": null
