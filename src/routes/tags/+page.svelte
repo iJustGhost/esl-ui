@@ -1,10 +1,22 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { scanTags, probeTag, type DiscoveredTag } from '$lib/tagScanner';
 	import { tagStore } from '$lib/tagStore';
 
 	const DEFAULT_SUBNET = '192.168.100';
 	const CURRENCY = 'PHP'; // tag fonts are ASCII only, so no ₱ symbol
+
+	type DiscoveredTag = { id: string; ip: string };
+
+	async function post<T>(url: string, body: unknown): Promise<T> {
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		if (!res.ok)
+			throw new Error((await res.json().catch(() => null))?.message ?? `HTTP ${res.status}`);
+		return res.json();
+	}
 
 	type Product = {
 		id: string; // product uuid, sent to the tag as `uuid`
@@ -21,6 +33,7 @@
 		boundUuid: string; // product uuid currently on the tag (read from the tag)
 		sync: 'idle' | 'syncing' | 'ok' | 'error';
 		syncMessage: string;
+		locked: boolean; // tag is locked and cannot be updated
 	};
 
 	let products: Product[] = $state([]);
@@ -45,7 +58,7 @@
 
 	const subnet = $derived(parseSubnet(subnetInput));
 
-	const canSync = $derived(tags.some((t) => t.online && t.productId));
+	const canSync = $derived(tags.some((t) => t.online));
 	const busy = $derived(scanning || checking || syncing);
 
 	// ---------- persistence ----------
@@ -80,38 +93,21 @@
 		products = await response.json();
 	}
 
-	// The product uuid currently stored on the tag ('' if none / unreachable).
-	async function readBoundUuid(ip: string): Promise<string> {
-		try {
-			const res = await fetch(`http://${ip}/api/tag`, {
-				cache: 'no-store',
-				signal: AbortSignal.timeout(1500)
-			});
-			if (!res.ok) return '';
-			const data = await res.json();
-			return typeof data.uuid === 'string' ? data.uuid : '';
-		} catch {
-			return '';
-		}
-	}
-
-	// ---------- saved tags: quick re-check (no full scan) ----------
-	async function checkKnown(tag: PriceTag) {
-		// last known IP first, then the mDNS name (survives DHCP address changes)
-		for (const host of [tag.ip, `${hostFor(tag.id)}.local`]) {
-			const found = await probeTag(host, 1200);
-			if (found?.id === tag.id) {
-				patchTag(tag.id, { ip: found.ip, online: true, boundUuid: await readBoundUuid(found.ip) });
-				return;
-			}
-		}
-		patchTag(tag.id, { online: false });
-	}
-
 	async function refreshKnown() {
+		if (!tags.length) return;
 		checking = true;
-		await Promise.all(tags.map(checkKnown));
-		checking = false;
+		try {
+			const results = await post<
+				{ id: string; ip: string; online: boolean; boundUuid: string; locked: boolean }[]
+			>('/api/tags/check', { tags: tags.map(({ id, ip }) => ({ id, ip })) });
+			for (const r of results) {
+				patchTag(r.id, { ip: r.ip, online: r.online, boundUuid: r.boundUuid, locked: r.locked });
+			}
+		} catch (e) {
+			console.error('Refresh failed', e);
+		} finally {
+			checking = false;
+		}
 	}
 
 	// ---------- full scan ----------
@@ -124,10 +120,12 @@
 			if (!products.length) await loadProducts();
 
 			tagStore.saveSubnet(subnet);
-			const discovered = await scanTags(subnet);
+			const { tags: discovered } = await post<{
+				tags: (DiscoveredTag & { boundUuid: string; locked: boolean })[];
+			}>('/api/tags/scan', { subnet });
 
 			// one entry per tag id; flag ids that answered from more than one IP
-			const byId = new Map<string, DiscoveredTag>();
+			const byId = new Map<string, (typeof discovered)[number]>();
 			const dupes = new Set<string>();
 			for (const t of discovered) {
 				if (byId.has(t.id)) dupes.add(t.id);
@@ -137,22 +135,21 @@
 				scanWarning = `Duplicate tag IDs on the network: ${[...dupes].join(', ')}. Give one of each pair a new ID.`;
 			}
 
-			const found = [...byId.values()];
-			const bound = await Promise.all(found.map((t) => readBoundUuid(t.ip)));
-
 			// start from the saved tags (offline unless found now), then add/update what we found
 			const next = new Map<string, PriceTag>(tags.map((t) => [t.id, { ...t, online: false }]));
-			found.forEach((tag, i) => {
+			for (const tag of byId.values()) {
 				const prev = next.get(tag.id);
 				next.set(tag.id, {
-					...tag,
+					id: tag.id,
+					ip: tag.ip,
 					online: true,
-					productId: prev?.productId || (isKnownProduct(bound[i]) ? bound[i] : ''),
-					boundUuid: bound[i],
+					locked: tag.locked,
+					productId: prev?.productId || (isKnownProduct(tag.boundUuid) ? tag.boundUuid : ''),
+					boundUuid: tag.boundUuid,
 					sync: prev?.sync ?? 'idle',
 					syncMessage: prev?.syncMessage ?? ''
 				});
-			});
+			}
 			tags = [...next.values()];
 		} catch (error) {
 			console.error('Tag scan failed:', error);
@@ -233,35 +230,44 @@
 
 	async function sync() {
 		syncing = true;
-		const targets = tags.filter((t) => t.online && t.productId);
-		const results: SyncResult[] = [];
+		const items = tags
+			.filter((t) => t.online)
+			.map(({ id, ip, productId }) => ({ id, ip, productId }));
+		items.forEach((i) => patchTag(i.id, { sync: 'syncing', syncMessage: '' }));
 
-		await Promise.all(
-			targets.map(async (tag) => {
-				const product = products.find((p) => p.id === tag.productId);
-				if (!product) return;
+		try {
+			const results = await post<
+				{
+					id: string;
+					productId: string;
+					ok: boolean;
+					time: 'set' | 'ntp' | 'failed';
+					productSynced: boolean;
+					error?: string;
+				}[]
+			>('/api/tags/sync', { items });
 
-				const base = {
-					tagId: tag.id,
-					ip: tag.ip,
-					productId: product.id,
-					productName: product.name
-				};
-				patchTag(tag.id, { sync: 'syncing', syncMessage: '' });
-				try {
-					await pushToTag(tag, product);
-					patchTag(tag.id, { sync: 'ok', syncMessage: 'Synced', boundUuid: product.id });
-					results.push({ ...base, ok: true });
-				} catch (e) {
-					const message = e instanceof Error ? e.message : 'Failed';
-					patchTag(tag.id, { sync: 'error', syncMessage: message });
-					results.push({ ...base, ok: false, error: message });
+			for (const r of results) {
+				const timeText = r.time === 'set' ? 'time set' : 'clock already on NTP';
+				if (r.ok) {
+					patchTag(r.id, {
+						sync: 'ok',
+						syncMessage: r.productSynced ? `Synced, ${timeText}` : `Done, ${timeText}`,
+						...(r.productSynced ? { boundUuid: r.productId } : {})
+					});
+				} else {
+					patchTag(r.id, {
+						sync: 'error',
+						syncMessage: (r.time === 'set' ? 'Time set, but: ' : '') + (r.error ?? 'Failed')
+					});
 				}
-			})
-		);
-
-		syncing = false;
-		void reportSync(results);
+			}
+		} catch (e) {
+			const message = e instanceof Error ? e.message : 'Failed';
+			items.forEach((i) => patchTag(i.id, { sync: 'error', syncMessage: message }));
+		} finally {
+			syncing = false;
+		}
 	}
 
 	onMount(async () => {
@@ -271,7 +277,8 @@
 			online: false,
 			boundUuid: '',
 			sync: 'idle',
-			syncMessage: ''
+			syncMessage: '',
+			locked: false
 		}));
 		loaded = true;
 
@@ -370,6 +377,12 @@
 						{#if tag.productId && tag.productId !== tag.boundUuid}
 							<span class="font-medium text-amber-700"> · needs sync</span>
 						{/if}
+					</p>
+				{/if}
+
+				{#if tag.online && tag.locked}
+					<p class="text-xs text-red-600">
+						Access denied: this tag rejected the API key. Re-flash its NVS.
 					</p>
 				{/if}
 

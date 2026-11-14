@@ -22,8 +22,10 @@
 				return Object.entries(d).map(([k, v]) => `${k}: ${fmt(v)}`);
 			case 'tag.sync':
 				return [
-					`${d.productName ?? '?'} → ${d.ip ?? '?'}`,
-					d.ok ? 'OK' : `Failed: ${fmt(d.error)}`
+					d.productName ? `${d.productName} → ${d.ip ?? '?'}` : `Clock only → ${d.ip ?? '?'}`,
+					d.ok
+						? `OK · clock: ${d.time === 'set' ? 'set' : d.time === 'ntp' ? 'already NTP' : '—'}`
+						: `Failed: ${fmt(d.error)}`
 				];
 			default:
 				return [];
